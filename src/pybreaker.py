@@ -451,9 +451,15 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         """
         self._success_counter += 1
 
-    def reset_counter(self):
+    def reset_counter_zero(self):
         """
         Sets the failure counter to zero.
+        """
+        self._fail_counter = 0
+
+    def reset_counter(self):
+        """
+        Decrease the failure counter by error rate.
         """
         self._total_calls = self._fail_counter + self._success_counter
         self._error_rate = self._fail_counter / self._total_calls
@@ -884,7 +890,7 @@ class CircuitClosedState(CircuitBreakerState):
             # using the same _state_storage object, or if the _state_storage objects
             # share a central source of truth (as would be the case with the redis
             # storage).
-            self._breaker._state_storage.reset_counter()
+            self._breaker._state_storage.reset_counter_zero()
             for listener in self._breaker.listeners:
                 listener.state_change(self._breaker, prev_state, self)
 

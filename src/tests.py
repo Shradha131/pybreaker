@@ -24,6 +24,7 @@ class CircuitBreakerStorageBasedTestCase(object):
         """
         def func(): return True
         self.assertTrue(self.breaker.call(func))
+        self.assertEqual(1, self.breaker.success_counter)
         self.assertEqual(0, self.breaker.fail_counter)
         self.assertEqual('closed', self.breaker.current_state)
 
@@ -45,9 +46,10 @@ class CircuitBreakerStorageBasedTestCase(object):
 
         self.assertRaises(NotImplementedError, self.breaker.call, err)
         self.assertEqual(1, self.breaker.fail_counter)
-        self.assertEqual(1, self.breaker.success_counter)
 
         self.assertTrue(self.breaker.call(suc))
+        self.assertEqual(1, self.breaker.success_counter)
+
         self.assertEqual(0, self.breaker.fail_counter)
         self.assertEqual('closed', self.breaker.current_state)
 
@@ -160,6 +162,7 @@ class CircuitBreakerStorageBasedTestCase(object):
 
         # Circuit should open
         self.assertTrue(self.breaker.call(fun))
+        self.assertEqual(1, self.breaker.success_counter)
         self.assertEqual(0, self.breaker.fail_counter)
         self.assertEqual('closed', self.breaker.current_state)
 

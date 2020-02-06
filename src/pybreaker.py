@@ -607,7 +607,7 @@ class CircuitRedisStorage(CircuitBreakerStorage):
             self.logger.error('RedisError', exc_info=True)
             pass
 
-    def reset_counter(self):
+    def reset_counter_zero(self):
         """
         Sets the failure counter to zero.
         """

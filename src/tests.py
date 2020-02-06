@@ -45,6 +45,7 @@ class CircuitBreakerStorageBasedTestCase(object):
 
         self.assertRaises(NotImplementedError, self.breaker.call, err)
         self.assertEqual(1, self.breaker.fail_counter)
+        self.assertEqual(1, self.breaker.success_counter)
 
         self.assertTrue(self.breaker.call(suc))
         self.assertEqual(0, self.breaker.fail_counter)

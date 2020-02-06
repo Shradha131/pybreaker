@@ -67,12 +67,24 @@ class CircuitBreaker(object):
         self._listeners = list(listeners or [])
         self._name = name
 
+        self._fail_counter = 0
+        self._success_counter = 0
+        self._error_rate = 1
+        self._total_calls = 0
+
     @property
     def fail_counter(self):
         """
         Returns the current number of consecutive failures.
         """
-        return self._state_storage.counter
+        return self._state_storage.fail_counter
+
+    @property
+    def success_counter(self):
+        """
+        Returns the current number of consecutive failures.
+        """
+        return self._state_storage.success_counter
 
     @property
     def fail_max(self):
@@ -183,11 +195,17 @@ class CircuitBreaker(object):
         with self._lock:
             self._excluded_exceptions.remove(exception)
 
-    def _inc_counter(self):
+    def _inc_counter_failure(self):
         """
         Increments the counter of failed calls.
         """
-        self._state_storage.increment_counter()
+        self._state_storage.increment_counter_failure()
+
+    def _inc_counter_success(self):
+        """
+        Increments the counter of failed calls.
+        """
+        self._state_storage.increment_counter_success()
 
     def is_system_error(self, exception):
         """
@@ -401,6 +419,9 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         """
         super(CircuitMemoryStorage, self).__init__('memory')
         self._fail_counter = 0
+        self._success_counter = 0
+        self._error_rate = 1
+        self._total_calls = 0
         self._opened_at = None
         self._state = state
 
@@ -418,17 +439,25 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         """
         self._state = state
 
-    def increment_counter(self):
+    def increment_counter_failure(self):
         """
         Increases the failure counter by one.
         """
         self._fail_counter += 1
 
+    def increment_counter_success(self):
+        """
+        Increases the failure counter by one.
+        """
+        self._success_counter += 1
+
     def reset_counter(self):
         """
         Sets the failure counter to zero.
         """
-        self._fail_counter = 0
+        self._total_calls = self._fail_counter + self._success_counter
+        self._error_rate = self._fail_counter / self._total_calls
+        self._fail_counter = self._fail_counter * self._error_rate
 
     @property
     def counter(self):
@@ -436,6 +465,20 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         Returns the current value of the failure counter.
         """
         return self._fail_counter
+
+    @property
+    def fail_counter(self):
+        """
+        Returns the current value of the failure counter.
+        """
+        return self._fail_counter
+
+    @property
+    def success_counter(self):
+        """
+        Returns the current value of the failure counter.
+        """
+        return self._success_counter
 
     @property
     def opened_at(self):
@@ -538,6 +581,26 @@ class CircuitRedisStorage(CircuitBreakerStorage):
             self.logger.error('RedisError', exc_info=True)
             pass
 
+    def increment_counter_failure(self):
+        """
+        Increases the failure counter by one.
+        """
+        try:
+            self._redis.incr(self._namespace('fail_counter'))
+        except self.RedisError:
+            self.logger.error('RedisError', exc_info=True)
+            pass
+
+    def increment_counter_success(self):
+        """
+        Increases the failure counter by one.
+        """
+        try:
+            self._redis.incr(self._namespace('success_counter'))
+        except self.RedisError:
+            self.logger.error('RedisError', exc_info=True)
+            pass
+
     def reset_counter(self):
         """
         Sets the failure counter to zero.
@@ -555,6 +618,36 @@ class CircuitRedisStorage(CircuitBreakerStorage):
         """
         try:
             value = self._redis.get(self._namespace('fail_counter'))
+            if value:
+                return int(value)
+            else:
+                return 0
+        except self.RedisError:
+            self.logger.error('RedisError: Assuming no errors', exc_info=True)
+            return 0
+
+    @property
+    def fail_counter(self):
+        """
+        Returns the current value of the failure counter.
+        """
+        try:
+            value = self._redis.get(self._namespace('fail_counter'))
+            if value:
+                return int(value)
+            else:
+                return 0
+        except self.RedisError:
+            self.logger.error('RedisError: Assuming no errors', exc_info=True)
+            return 0
+
+    @property
+    def success_counter(self):
+        """
+        Returns the current value of the failure counter.
+        """
+        try:
+            value = self._redis.get(self._namespace('success_counter'))
             if value:
                 return int(value)
             else:
@@ -667,7 +760,7 @@ class CircuitBreakerState(object):
         Handles a failed call to the guarded operation.
         """
         if self._breaker.is_system_error(exc):
-            self._breaker._inc_counter()
+            self._breaker._inc_counter_failure()
             for listener in self._breaker.listeners:
                 listener.failure(self._breaker, exc)
             self.on_failure(exc)
@@ -681,6 +774,7 @@ class CircuitBreakerState(object):
         """
         Handles a successful call to the guarded operation.
         """
+        self._breaker._inc_counter_success()
         self._breaker._state_storage.reset_counter()
         self.on_success()
         for listener in self._breaker.listeners:

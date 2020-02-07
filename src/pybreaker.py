@@ -51,7 +51,7 @@ class CircuitBreaker(object):
     This pattern is described by Michael T. Nygard in his book 'Release It!'.
     """
 
-    def __init__(self, fail_max=5, reset_timeout=60, exclude=None,
+    def __init__(self, err_threshold=50, request_volume_window=20, fail_max=5, reset_timeout=60, exclude=None,
                  listeners=None, state_storage=None, name=None):
         """
         Creates a new circuit breaker with the given parameters.
@@ -60,6 +60,8 @@ class CircuitBreaker(object):
         self._state_storage = state_storage or CircuitMemoryStorage(STATE_CLOSED)
         self._state = self._create_new_state(self.current_state)
 
+        self._err_threshold = err_threshold
+        self._request_volume_window = request_volume_window
         self._fail_max = fail_max
         self._reset_timeout = reset_timeout
 
@@ -94,6 +96,7 @@ class CircuitBreaker(object):
         """
         return self._fail_max
 
+
     @fail_max.setter
     def fail_max(self, number):
         """
@@ -101,6 +104,38 @@ class CircuitBreaker(object):
         opened.
         """
         self._fail_max = number
+
+    @property
+    def err_threshold(self):
+        """
+        Returns the maximum number of failures tolerated before the circuit is
+        opened.
+        """
+        return self._err_threshold
+
+    @err_threshold.setter
+    def err_threshold(self, number):
+        """
+        Sets the maximum `number` of failures tolerated before the circuit is
+        opened.
+        """
+        self._err_threshold = number
+
+    @property
+    def request_volume_window(self):
+        """
+        Returns the maximum number of failures tolerated before the circuit is
+        opened.
+        """
+        return self._request_volume_window
+
+    @request_volume_window.setter
+    def request_volume_window(self, number):
+        """
+        Sets the maximum `number` of failures tolerated before the circuit is
+        opened.
+        """
+        self._request_volume_window = number
 
     @property
     def reset_timeout(self):
@@ -466,13 +501,6 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         self._fail_counter = self._fail_counter * self._error_rate
 
     @property
-    def counter(self):
-        """
-        Returns the current value of the failure counter.
-        """
-        return self._fail_counter
-
-    @property
     def fail_counter(self):
         """
         Returns the current value of the failure counter.
@@ -781,7 +809,7 @@ class CircuitBreakerState(object):
         Handles a successful call to the guarded operation.
         """
         self._breaker._inc_counter_success()
-        self._breaker._state_storage.reset_counter()
+        #self._breaker._state_storage.reset_counter()
         self.on_success()
         for listener in self._breaker.listeners:
             listener.success(self._breaker)
@@ -899,7 +927,10 @@ class CircuitClosedState(CircuitBreakerState):
         Moves the circuit breaker to the "open" state once the failures
         threshold is reached.
         """
-        if self._breaker._state_storage.counter >= self._breaker.fail_max:
+
+        self._breaker._state_storage.err_rate = self._breaker._state_storage.fail_counter / self._breaker._state_storage.total_calls
+
+        if self._breaker._state_storage.err_rate >= self._breaker.err_threshold:
             self._breaker.open()
 
             error_msg = 'Failures threshold reached, circuit breaker opened'

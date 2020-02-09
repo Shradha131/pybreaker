@@ -29,7 +29,7 @@ timeout = timedelta(seconds=5)
 @app.route('/')
 def hello_word():
     return "Total : {0}\nFail : {1}\nSuccess : {2}\nState : {3}"\
-        .format(db_breaker._state_storage._total_calls_counter, db_breaker._state_storage.fail_counter,
+        .format(db_breaker._state_storage._total_calls, db_breaker._state_storage.fail_counter,
                     db_breaker._state_storage.success_counter, db_breaker.current_state)
 
 @db_breaker

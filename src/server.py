@@ -2,6 +2,7 @@ from flask import Flask
 import requests
 import pybreaker
 import logging
+from datetime import datetime, timedelta
 
 
 class Glistener(pybreaker.CircuitBreakerListener):
@@ -26,12 +27,19 @@ db_breaker = pybreaker.CircuitBreaker(fail_max=2, reset_timeout=5,
                                       listeners=[Glistener()]
                                       )
 
+opened_at = datetime.utcnow()
+timeout = timedelta(seconds=10)
 
-@db_breaker
 @app.route('/')
+@db_breaker
 def hello_word():
-    print db_breaker.current_state
-    return 'hello from server 1'
+    time_now = datetime.utcnow()
+    while time_now < (opened_at + timeout):
+        return "Total : {0}\nFail : {1}\nSuccess : {2}\nState : {3}" \
+        .format(db_breaker._state_storage._total_calls, db_breaker._state_storage.fail_counter,
+                db_breaker._state_storage.success_counter, db_breaker.current_state)
+
+    raise NotImplementedError()
 
 
 @app.route('/err')

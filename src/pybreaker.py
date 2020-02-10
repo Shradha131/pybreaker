@@ -808,7 +808,7 @@ class CircuitBreakerState(object):
                 listener.failure(self._breaker, exc)
             self.on_failure(exc)
         else:
-            self._handle_success()
+            self._handle_success();
 
         if reraise:
             raise exc
@@ -927,7 +927,8 @@ class CircuitClosedState(CircuitBreakerState):
             # using the same _state_storage object, or if the _state_storage objects
             # share a central source of truth (as would be the case with the redis
             # storage).
-            self._breaker._state_storage.reset_counter_zero()
+
+            #self._breaker._state_storage.reset_counter_zero()
             for listener in self._breaker.listeners:
                 listener.state_change(self._breaker, prev_state, self)
 
@@ -936,17 +937,25 @@ class CircuitClosedState(CircuitBreakerState):
         Moves the circuit breaker to the "open" state once the failures
         threshold is reached.
         """
-        print self._breaker.fail_max
+
+        print 'close state: on failure'
+        print self._breaker._state_storage.fail_counter
+        print self._breaker._state_storage.total_calls
+        #print self._breaker._state_storage.success_counter
+
+
+        self._breaker._state_storage._err_rate = float(self._breaker._state_storage.fail_counter) / float(self._breaker._state_storage.total_calls)
+
+        print self._breaker._state_storage._err_rate
         print self._breaker.err_threshold
-
-        self._breaker._state_storage._err_rate = self._breaker._state_storage.fail_counter / self._breaker._state_storage.total_calls
-
 
         if self._breaker._state_storage._err_rate >= self._breaker.err_threshold:
             self._breaker.open()
-            error_msg = 'Failures threshold reached, circuit breaker opened'
+            error_msg = 'Failure threshold reached, circuit breaker opened'
             six.reraise(CircuitBreakerError, CircuitBreakerError(error_msg), sys.exc_info()[2])
 
+    def on_success(self):
+        print 'close state : success state'
 
 class CircuitOpenState(CircuitBreakerState):
     """
@@ -976,7 +985,7 @@ class CircuitOpenState(CircuitBreakerState):
         timeout = timedelta(seconds=self._breaker.reset_timeout)
         opened_at = self._breaker._state_storage.opened_at
         if opened_at and datetime.utcnow() < opened_at + timeout:
-            error_msg = 'Timeout not elapsed yet, circuit breaker still open'
+            error_msg = 'Timeout not elapsed yet, circuit breaker still open!'
             raise CircuitBreakerError(error_msg)
         else:
             self._breaker.half_open()
@@ -1024,8 +1033,6 @@ class CircuitHalfOpenState(CircuitBreakerState):
         """
         Closes the circuit breaker.
         """
-        error_msg = 'Trial call Success, circuit breaker closed'
-        six.reraise(CircuitBreakerError, CircuitBreakerError(error_msg), sys.exc_info()[2])
         print 'half open : success state'
         self._breaker.close()
 

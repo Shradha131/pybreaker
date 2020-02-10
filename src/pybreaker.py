@@ -17,6 +17,7 @@ from functools import wraps
 import threading
 import six
 import sys
+import ringbuffer
 
 try:
     from tornado import gen
@@ -51,7 +52,7 @@ class CircuitBreaker(object):
     This pattern is described by Michael T. Nygard in his book 'Release It!'.
     """
 
-    def __init__(self, err_threshold=0.5, request_volume_window=20, fail_max=5, reset_timeout=60, exclude=None,
+    def __init__(self, err_threshold=0.5, request_volume_window=5, fail_max=5, reset_timeout=60, exclude=None,
                  listeners=None, state_storage=None, name=None):
         """
         Creates a new circuit breaker with the given parameters.
@@ -68,25 +69,26 @@ class CircuitBreaker(object):
         self._excluded_exceptions = list(exclude or [])
         self._listeners = list(listeners or [])
         self._name = name
+        self._success_fail_buffer = ringbuffer.RingBuffer(request_volume_window)
 
     @property
     def fail_counter(self):
         """
-        Returns the current number of consecutive failures.
+        Returns the current number of failures.
         """
         return self._state_storage.fail_counter
 
     @property
     def success_counter(self):
         """
-        Returns the current number of consecutive failures.
+        Returns the current number of success.
         """
         return self._state_storage.success_counter
 
     @property
     def total_calls(self):
         """
-        Returns the current number of consecutive failures.
+        Returns the total number of calls.
         """
         return self._state_storage.fail_counter + self._state_storage.success_counter
 
@@ -97,6 +99,7 @@ class CircuitBreaker(object):
         opened.
         """
         return self._fail_max
+
 
 
     @fail_max.setter
@@ -243,6 +246,18 @@ class CircuitBreaker(object):
         Increments the counter of failed calls.
         """
         self._state_storage.increment_counter_success()
+
+    def _dec_counter_failure(self):
+        """
+        decrements the counter of failed calls.
+        """
+        self._state_storage.decrement_counter_failure()
+
+    def _dec_counter_success(self):
+        """
+        decrements the counter of failed calls.
+        """
+        self._state_storage.decrement_counter_success()
 
     def is_system_error(self, exception):
         """
@@ -487,6 +502,18 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         Increases the failure counter by one.
         """
         self._success_counter += 1
+
+    def decrement_counter_failure(self):
+        """
+        Increases the failure counter by one.
+        """
+        self._fail_counter -= 1
+
+    def decrement_counter_success(self):
+        """
+        Increases the failure counter by one.
+        """
+        self._success_counter -= 1
 
     def reset_counter_zero(self):
         """
@@ -803,7 +830,22 @@ class CircuitBreakerState(object):
         Handles a failed call to the guarded operation.
         """
         if self._breaker.is_system_error(exc):
-            self._breaker._inc_counter_failure()
+
+
+
+            if len(self._breaker._success_fail_buffer.get()) == self._breaker._request_volume_window:
+                if self._breaker._success_fail_buffer.get_old_value != 0:
+                    self._breaker._inc_counter_failure()
+                    self._breaker._dec_counter_success()
+            else:
+                self._breaker._inc_counter_failure()
+
+            self._breaker._success_fail_buffer.append(0)
+
+
+
+            print  self._breaker._success_fail_buffer.get()
+
             for listener in self._breaker.listeners:
                 listener.failure(self._breaker, exc)
             self.on_failure(exc)
@@ -817,7 +859,15 @@ class CircuitBreakerState(object):
         """
         Handles a successful call to the guarded operation.
         """
-        self._breaker._inc_counter_success()
+        if len(self._breaker._success_fail_buffer.get()) == self._breaker._request_volume_window:
+            if self._breaker._success_fail_buffer.get_old_value != 1:
+                self._breaker._inc_counter_success()
+                self._breaker._dec_counter_failure()
+        else:
+            self._breaker._inc_counter_success()
+
+        self._breaker._success_fail_buffer.append(1)
+        print  self._breaker._success_fail_buffer.get()
         #self._breaker._state_storage.reset_counter()
         self.on_success()
         for listener in self._breaker.listeners:
@@ -941,21 +991,30 @@ class CircuitClosedState(CircuitBreakerState):
         print 'close state: on failure'
         print self._breaker._state_storage.fail_counter
         print self._breaker._state_storage.total_calls
-        #print self._breaker._state_storage.success_counter
 
-
-        self._breaker._state_storage._err_rate = float(self._breaker._state_storage.fail_counter) / float(self._breaker._state_storage.total_calls)
+        self._breaker._state_storage._err_rate = float(self._breaker._state_storage.fail_counter) / self._breaker._request_volume_window
 
         print self._breaker._state_storage._err_rate
         print self._breaker.err_threshold
 
-        if self._breaker._state_storage._err_rate >= self._breaker.err_threshold:
+        if self._breaker._state_storage._err_rate >= self._breaker.err_threshold and len(self._breaker._success_fail_buffer.get()) == self._breaker._request_volume_window:
             self._breaker.open()
+            if self._breaker._success_fail_buffer.get_curr_value != self._breaker._success_fail_buffer.get_old_value:
+               if  self._breaker._success_fail_buffer.get_curr_value != 1: #success
+                    self._breaker._inc_counter_success()
+                    self._breaker._dec_counter_failure()
+               else:
+                   self._breaker._dec_counter_success()
+                   self._breaker._inc_counter_failure()
+
+
+
             error_msg = 'Failure threshold reached, circuit breaker opened'
             six.reraise(CircuitBreakerError, CircuitBreakerError(error_msg), sys.exc_info()[2])
 
     def on_success(self):
         print 'close state : success state'
+
 
 class CircuitOpenState(CircuitBreakerState):
     """

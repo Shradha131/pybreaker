@@ -994,6 +994,7 @@ class CircuitClosedState(CircuitBreakerState):
 
         self._breaker._state_storage._err_rate = float(self._breaker._state_storage.fail_counter) / self._breaker._request_volume_window
 
+        print self._breaker._request_volume_window
         print self._breaker._state_storage._err_rate
         print self._breaker.err_threshold
 

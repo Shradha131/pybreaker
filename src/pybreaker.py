@@ -17,6 +17,7 @@ from functools import wraps
 import threading
 import six
 import sys
+import ringbuffer
 
 try:
     from tornado import gen
@@ -51,7 +52,7 @@ class CircuitBreaker(object):
     This pattern is described by Michael T. Nygard in his book 'Release It!'.
     """
 
-    def __init__(self, fail_max=5, reset_timeout=60, exclude=None,
+    def __init__(self, err_threshold=0.5, request_volume_window=5, fail_max=5, reset_timeout=60, exclude=None,
                  listeners=None, state_storage=None, name=None):
         """
         Creates a new circuit breaker with the given parameters.
@@ -60,19 +61,36 @@ class CircuitBreaker(object):
         self._state_storage = state_storage or CircuitMemoryStorage(STATE_CLOSED)
         self._state = self._create_new_state(self.current_state)
 
+        self._err_threshold = err_threshold
+        self._request_volume_window = request_volume_window
         self._fail_max = fail_max
         self._reset_timeout = reset_timeout
 
         self._excluded_exceptions = list(exclude or [])
         self._listeners = list(listeners or [])
         self._name = name
+        self._success_fail_buffer = ringbuffer.RingBuffer(request_volume_window)
 
     @property
     def fail_counter(self):
         """
-        Returns the current number of consecutive failures.
+        Returns the current number of failures.
         """
-        return self._state_storage.counter
+        return self._state_storage.fail_counter
+
+    @property
+    def success_counter(self):
+        """
+        Returns the current number of success.
+        """
+        return self._state_storage.success_counter
+
+    @property
+    def total_calls(self):
+        """
+        Returns the total number of calls.
+        """
+        return self._state_storage.fail_counter + self._state_storage.success_counter
 
     @property
     def fail_max(self):
@@ -82,6 +100,8 @@ class CircuitBreaker(object):
         """
         return self._fail_max
 
+
+
     @fail_max.setter
     def fail_max(self, number):
         """
@@ -89,6 +109,38 @@ class CircuitBreaker(object):
         opened.
         """
         self._fail_max = number
+
+    @property
+    def err_threshold(self):
+        """
+        Returns the error rate tolerated before the circuit is
+        opened.
+        """
+        return self._err_threshold
+
+    @err_threshold.setter
+    def err_threshold(self, number):
+        """
+        Sets the error threshold tolerated before the circuit is
+        opened.
+        """
+        self._err_threshold = number
+
+    @property
+    def request_volume_window(self):
+        """
+        Returns the size of the window on which total number of calls
+        considered.
+        """
+        return self._request_volume_window
+
+    @request_volume_window.setter
+    def request_volume_window(self, number):
+        """
+        Sets the size of the window on which total number of calls
+        considered.
+        """
+        self._request_volume_window = number
 
     @property
     def reset_timeout(self):
@@ -183,11 +235,29 @@ class CircuitBreaker(object):
         with self._lock:
             self._excluded_exceptions.remove(exception)
 
-    def _inc_counter(self):
+    def _inc_counter_failure(self):
         """
         Increments the counter of failed calls.
         """
-        self._state_storage.increment_counter()
+        self._state_storage.increment_counter_failure()
+
+    def _inc_counter_success(self):
+        """
+        Increments the counter of successful calls.
+        """
+        self._state_storage.increment_counter_success()
+
+    def _dec_counter_failure(self):
+        """
+        decrements the counter of failed calls.
+        """
+        self._state_storage.decrement_counter_failure()
+
+    def _dec_counter_success(self):
+        """
+        decrements the counter of successful calls.
+        """
+        self._state_storage.decrement_counter_success()
 
     def is_system_error(self, exception):
         """
@@ -401,6 +471,9 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         """
         super(CircuitMemoryStorage, self).__init__('memory')
         self._fail_counter = 0
+        self._success_counter = 0
+        self._err_rate = 1
+        self._total_calls = 0
         self._opened_at = None
         self._state = state
 
@@ -418,24 +491,64 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         """
         self._state = state
 
-    def increment_counter(self):
+    def increment_counter_failure(self):
         """
         Increases the failure counter by one.
         """
         self._fail_counter += 1
 
-    def reset_counter(self):
+    def increment_counter_success(self):
+        """
+        Increases the success counter by one.
+        """
+        self._success_counter += 1
+
+    def decrement_counter_failure(self):
+        """
+        Decreases the failure counter by one.
+        """
+        self._fail_counter -= 1
+
+    def decrement_counter_success(self):
+        """
+        Increases the success counter by one.
+        """
+        self._success_counter -= 1
+
+    def reset_counter_zero(self):
         """
         Sets the failure counter to zero.
         """
         self._fail_counter = 0
 
+    def reset_counter(self):
+        """
+        Decrease the failure counter by error rate.
+        """
+        self._total_calls = self._fail_counter + self._success_counter
+        self._error_rate = self._fail_counter / self._total_calls
+        self._fail_counter = self._fail_counter * self._error_rate
+
     @property
-    def counter(self):
+    def fail_counter(self):
         """
         Returns the current value of the failure counter.
         """
         return self._fail_counter
+
+    @property
+    def success_counter(self):
+        """
+        Returns the current value of the success counter.
+        """
+        return self._success_counter
+
+    @property
+    def total_calls(self):
+        """
+        Returns the total number of calls made.
+        """
+        return self.fail_counter + self.success_counter
 
     @property
     def opened_at(self):
@@ -538,7 +651,27 @@ class CircuitRedisStorage(CircuitBreakerStorage):
             self.logger.error('RedisError', exc_info=True)
             pass
 
-    def reset_counter(self):
+    def increment_counter_failure(self):
+        """
+        Increases the failure counter by one.
+        """
+        try:
+            self._redis.incr(self._namespace('fail_counter'))
+        except self.RedisError:
+            self.logger.error('RedisError', exc_info=True)
+            pass
+
+    def increment_counter_success(self):
+        """
+        Increases the success counter by one.
+        """
+        try:
+            self._redis.incr(self._namespace('success_counter'))
+        except self.RedisError:
+            self.logger.error('RedisError', exc_info=True)
+            pass
+
+    def reset_counter_zero(self):
         """
         Sets the failure counter to zero.
         """
@@ -555,6 +688,36 @@ class CircuitRedisStorage(CircuitBreakerStorage):
         """
         try:
             value = self._redis.get(self._namespace('fail_counter'))
+            if value:
+                return int(value)
+            else:
+                return 0
+        except self.RedisError:
+            self.logger.error('RedisError: Assuming no errors', exc_info=True)
+            return 0
+
+    @property
+    def fail_counter(self):
+        """
+        Returns the current value of the failure counter.
+        """
+        try:
+            value = self._redis.get(self._namespace('fail_counter'))
+            if value:
+                return int(value)
+            else:
+                return 0
+        except self.RedisError:
+            self.logger.error('RedisError: Assuming no errors', exc_info=True)
+            return 0
+
+    @property
+    def success_counter(self):
+        """
+        Returns the current value of the success counter.
+        """
+        try:
+            value = self._redis.get(self._namespace('success_counter'))
             if value:
                 return int(value)
             else:
@@ -667,12 +830,24 @@ class CircuitBreakerState(object):
         Handles a failed call to the guarded operation.
         """
         if self._breaker.is_system_error(exc):
-            self._breaker._inc_counter()
+            # If the buffer window is filled then go into this case
+            if self._breaker._state_storage.total_calls == self._breaker._request_volume_window:
+                # If last call was a successful call
+                if self._breaker._success_fail_buffer.get_old_value != 0:
+                    self._breaker._inc_counter_failure()
+                    self._breaker._dec_counter_success()
+            else:
+                self._breaker._inc_counter_failure()
+
+            self._breaker._success_fail_buffer.append(0)
+
+            print  self._breaker._success_fail_buffer.get()
+
             for listener in self._breaker.listeners:
                 listener.failure(self._breaker, exc)
             self.on_failure(exc)
         else:
-            self._handle_success()
+            self._handle_success();
 
         if reraise:
             raise exc
@@ -681,7 +856,19 @@ class CircuitBreakerState(object):
         """
         Handles a successful call to the guarded operation.
         """
-        self._breaker._state_storage.reset_counter()
+        # If the buffer window is filled then go into this case
+        if self._breaker._state_storage.total_calls == self._breaker._request_volume_window:
+            # If last call was a failed call
+            if self._breaker._success_fail_buffer.get_old_value != 1:
+                self._breaker._inc_counter_success()
+                self._breaker._dec_counter_failure()
+        else:
+            self._breaker._inc_counter_success()
+
+        self._breaker._success_fail_buffer.append(1)
+
+        print  self._breaker._success_fail_buffer.get()
+
         self.on_success()
         for listener in self._breaker.listeners:
             listener.success(self._breaker)
@@ -790,20 +977,36 @@ class CircuitClosedState(CircuitBreakerState):
             # using the same _state_storage object, or if the _state_storage objects
             # share a central source of truth (as would be the case with the redis
             # storage).
-            self._breaker._state_storage.reset_counter()
+
+            #self._breaker._state_storage.reset_counter_zero()
             for listener in self._breaker.listeners:
                 listener.state_change(self._breaker, prev_state, self)
 
     def on_failure(self, exc):
         """
-        Moves the circuit breaker to the "open" state once the failures
+        Moves the circuit breaker to the "open" state once the error
         threshold is reached.
         """
-        if self._breaker._state_storage.counter >= self._breaker.fail_max:
+        print 'close state: on failure'
+        print self._breaker._state_storage.fail_counter
+        print self._breaker._state_storage.total_calls
+
+        self._breaker._state_storage._err_rate = float(self._breaker._state_storage.fail_counter) / self._breaker._request_volume_window
+
+        print self._breaker._request_volume_window
+        print self._breaker._state_storage._err_rate
+        print self._breaker.err_threshold
+
+        # If current window err_rate is more than the defined threshold and total number of calls is equal to window size
+        if self._breaker._state_storage._err_rate >= self._breaker.err_threshold\
+                and self._breaker._state_storage.total_calls == self._breaker._request_volume_window:
             self._breaker.open()
 
-            error_msg = 'Failures threshold reached, circuit breaker opened'
+            error_msg = 'Failure threshold reached, circuit breaker opened'
             six.reraise(CircuitBreakerError, CircuitBreakerError(error_msg), sys.exc_info()[2])
+
+    def on_success(self):
+        print 'close state : success state'
 
 
 class CircuitOpenState(CircuitBreakerState):
@@ -862,6 +1065,8 @@ class CircuitHalfOpenState(CircuitBreakerState):
         """
         Moves the given circuit breaker `cb` to the "half-open" state.
         """
+        print 'half_open STATE'
+
         super(CircuitHalfOpenState, self).__init__(cb, STATE_HALF_OPEN)
         if notify:
             for listener in self._breaker._listeners:
@@ -871,6 +1076,7 @@ class CircuitHalfOpenState(CircuitBreakerState):
         """
         Opens the circuit breaker.
         """
+        print 'half open : fail state'
         self._breaker.open()
         error_msg = 'Trial call failed, circuit breaker opened'
         six.reraise(CircuitBreakerError, CircuitBreakerError(error_msg), sys.exc_info()[2])
@@ -879,6 +1085,7 @@ class CircuitHalfOpenState(CircuitBreakerState):
         """
         Closes the circuit breaker.
         """
+        print 'half open : success state'
         self._breaker.close()
 
 

@@ -68,7 +68,7 @@ class CircuitBreakerStorageBasedTestCase(object):
 
         # Circuit should open
         self.assertRaises(CircuitBreakerError, self.breaker.call, func)
-        self.assertEqual(4, self.breaker.fail_counter)
+        self.assertEqual(5, self.breaker.fail_counter)
         self.assertEqual('open', self.breaker.current_state)
 
     def test_traceback_in_circuitbreaker_error(self):
@@ -89,7 +89,7 @@ class CircuitBreakerStorageBasedTestCase(object):
         except CircuitBreakerError as e:
             import traceback
             self.assertIn('NotImplementedError', traceback.format_exc())
-        self.assertEqual(4, self.breaker.fail_counter)
+        self.assertEqual(5, self.breaker.fail_counter)
         self.assertEqual('open', self.breaker.current_state)
 
     def test_failed_call_after_timeout(self):
@@ -106,14 +106,14 @@ class CircuitBreakerStorageBasedTestCase(object):
 
         # Circuit should open
         self.assertRaises(CircuitBreakerError, self.breaker.call, func)
-        self.assertEqual(4, self.breaker.fail_counter)
+        self.assertEqual(5, self.breaker.fail_counter)
 
         # Wait for timeout
         sleep(0.6)
 
         # Circuit should open again
         self.assertRaises(CircuitBreakerError, self.breaker.call, func)
-        self.assertEqual(5, self.breaker.fail_counter)
+        self.assertEqual(6, self.breaker.fail_counter)
         self.assertEqual('open', self.breaker.current_state)
 
     def test_successful_after_timeout(self):
@@ -134,15 +134,15 @@ class CircuitBreakerStorageBasedTestCase(object):
         # Circuit should open
         self.assertRaises(CircuitBreakerError, self.breaker.call, err)
         self.assertRaises(CircuitBreakerError, self.breaker.call, suc)
-        self.assertEqual(4, self.breaker.fail_counter)
+        self.assertEqual(5, self.breaker.fail_counter)
 
         # Wait for timeout, at least a second since redis rounds to a second
         sleep(2)
 
         # Circuit should close again
         self.assertTrue(self.breaker.call(suc))
-        self.assertEqual(2, self.breaker.success_counter)
-        self.assertEqual(3, self.breaker.fail_counter)
+        self.assertEqual(1, self.breaker.success_counter)
+        self.assertEqual(4, self.breaker.fail_counter)
         self.assertEqual('closed', self.breaker.current_state)
         self.assertEqual(1, suc.call_count)
 
@@ -176,6 +176,47 @@ class CircuitBreakerStorageBasedTestCase(object):
         self.assertEqual(1, self.breaker.success_counter)
         self.assertEqual(0, self.breaker.fail_counter)
         self.assertEqual('closed', self.breaker.current_state)
+
+    def test_call_when_total_calls_less_than_request_volume_window(self):
+        """CircuitBreaker: it should not open the circuit until total calls
+         are less than defined request_volume_window size.
+        """
+
+        def func(): raise NotImplementedError()
+
+        self.assertRaises(NotImplementedError, self.breaker.call, func)
+        self.assertRaises(NotImplementedError, self.breaker.call, func)
+        self.assertRaises(NotImplementedError, self.breaker.call, func)
+        self.assertRaises(NotImplementedError, self.breaker.call, func)
+
+        self.assertEqual(4, self.breaker.fail_counter)
+        self.assertEqual(0, self.breaker.success_counter)
+
+        self.assertEqual('closed', self.breaker.current_state)
+
+    def test_call_when_total_calls_greater_than_request_volume_window(self):
+        """CircuitBreaker: it should not open the circuit until total calls
+         are less than defined request_volume_window size.
+        """
+
+        def func(): raise NotImplementedError()
+
+        self.assertRaises(NotImplementedError, self.breaker.call, func)
+        self.assertRaises(NotImplementedError, self.breaker.call, func)
+        self.assertRaises(NotImplementedError, self.breaker.call, func)
+        self.assertRaises(NotImplementedError, self.breaker.call, func)
+
+        self.assertRaises(CircuitBreakerError, self.breaker.call, func)
+
+        self.assertEqual('open', self.breaker.current_state)
+
+        self.assertEqual(5, self.breaker.fail_counter)
+        self.assertEqual(0, self.breaker.success_counter)
+
+        # number of failures greater than window size, as err_rate = 6/5 is greater than err_threshold, it will through CB error
+        self.assertRaises(CircuitBreakerError, self.breaker.call, func)
+
+
 
     def test_close(self):
         """CircuitBreaker: it should allow the circuit to be closed manually.

@@ -1000,15 +1000,6 @@ class CircuitClosedState(CircuitBreakerState):
 
         if self._breaker._state_storage._err_rate >= self._breaker.err_threshold and len(self._breaker._success_fail_buffer.get()) == self._breaker._request_volume_window:
             self._breaker.open()
-            if self._breaker._success_fail_buffer.get_curr_value != self._breaker._success_fail_buffer.get_old_value:
-               if  self._breaker._success_fail_buffer.get_curr_value != 1: #success
-                    self._breaker._inc_counter_success()
-                    self._breaker._dec_counter_failure()
-               else:
-                   self._breaker._dec_counter_success()
-                   self._breaker._inc_counter_failure()
-
-
 
             error_msg = 'Failure threshold reached, circuit breaker opened'
             six.reraise(CircuitBreakerError, CircuitBreakerError(error_msg), sys.exc_info()[2])

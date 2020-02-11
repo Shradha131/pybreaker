@@ -30,6 +30,7 @@ db_breaker = pybreaker.CircuitBreaker(fail_max=2, reset_timeout=5,
 opened_at = datetime.utcnow()
 timeout = timedelta(seconds=10)
 
+
 @app.route('/')
 @db_breaker
 def hello_word():

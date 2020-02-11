@@ -998,7 +998,7 @@ class CircuitClosedState(CircuitBreakerState):
         print self._breaker._state_storage._err_rate
         print self._breaker.err_threshold
 
-        if self._breaker._state_storage._err_rate >= self._breaker.err_threshold and len(self._breaker._success_fail_buffer.get()) == self._breaker._request_volume_window:
+        if self._breaker._state_storage._err_rate >= self._breaker.err_threshold and self._breaker._state_storage.total_calls == self._breaker._request_volume_window:
             self._breaker.open()
 
             error_msg = 'Failure threshold reached, circuit breaker opened'

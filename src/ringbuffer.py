@@ -12,8 +12,12 @@ class RingBuffer:
             self.old = 0
             self.new = 0
 
+        def clear(self):
+            del self.data[:]
+
         def append(self, element):
             self.new = element
+            print self.curr
             self.old = self.data[self.curr]
             self.data[self.curr] = self.new
             self.curr = (self.curr + 1) % self.size

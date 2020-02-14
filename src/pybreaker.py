@@ -53,7 +53,7 @@ class CircuitBreaker(object):
     """
 
     def __init__(self, err_threshold=0.5, request_volume_window=5, fail_max=5, reset_timeout=60, exclude=None,
-                 listeners=None, state_storage=None, name=None):
+                 listeners=None, state_storage=None, name=None, buffer_reset_flag=False):
         """
         Creates a new circuit breaker with the given parameters.
         """
@@ -70,6 +70,7 @@ class CircuitBreaker(object):
         self._listeners = list(listeners or [])
         self._name = name
         self._success_fail_buffer = ringbuffer.RingBuffer(request_volume_window)
+        self._buffer_reset_flag = buffer_reset_flag
 
     @property
     def fail_counter(self):
@@ -133,6 +134,22 @@ class CircuitBreaker(object):
         considered.
         """
         return self._request_volume_window
+
+    @property
+    def buffer_reset_flag(self):
+        """
+        Returns the size of the window on which total number of calls
+        considered.
+        """
+        return self._buffer_reset_flag
+
+    @buffer_reset_flag.setter
+    def buffer_reset_flag(self, reset):
+        """
+        Returns the size of the window on which total number of calls
+        considered.
+        """
+        self.buffer_reset_flag = reset
 
     @request_volume_window.setter
     def request_volume_window(self, number):
@@ -974,11 +991,12 @@ class CircuitClosedState(CircuitBreakerState):
             # using the same _state_storage object, or if the _state_storage objects
             # share a central source of truth (as would be the case with the redis
             # storage).
-            print 'clearing buffer'
-            self.clear_buffer(self._breaker._success_fail_buffer)
-            self._breaker._success_fail_buffer.__class__ = ringbuffer.RingBuffer
-            self._breaker._state_storage.reset_counter_zero()
-            print 'reset Fail and Success counters'
+            if self._breaker.buffer_reset_flag:
+                print 'clearing buffer'
+                self.clear_buffer(self._breaker._success_fail_buffer)
+                self._breaker._success_fail_buffer.__class__ = ringbuffer.RingBuffer
+                self._breaker._state_storage.reset_counter_zero()
+                print 'reset Fail and Success counters'
 
             for listener in self._breaker.listeners:
                 listener.state_change(self._breaker, prev_state, self)

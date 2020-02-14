@@ -501,6 +501,7 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         """
         Increases the success counter by one.
         """
+        print self._success_counter
         self._success_counter += 1
 
     def decrement_counter_failure(self):
@@ -520,14 +521,7 @@ class CircuitMemoryStorage(CircuitBreakerStorage):
         Sets the failure counter to zero.
         """
         self._fail_counter = 0
-
-    def reset_counter(self):
-        """
-        Decrease the failure counter by error rate.
-        """
-        self._total_calls = self._fail_counter + self._success_counter
-        self._error_rate = self._fail_counter / self._total_calls
-        self._fail_counter = self._fail_counter * self._error_rate
+        self._success_counter = 0
 
     @property
     def fail_counter(self):
@@ -838,7 +832,7 @@ class CircuitBreakerState(object):
                     self._breaker._dec_counter_success()
             else:
                 self._breaker._inc_counter_failure()
-
+            print 'append on failure'
             self._breaker._success_fail_buffer.append(0)
 
             print  self._breaker._success_fail_buffer.get()
@@ -858,12 +852,15 @@ class CircuitBreakerState(object):
         """
         # If the buffer window is filled then go into this case
         if self._breaker._state_storage.total_calls == self._breaker._request_volume_window:
+
             # If last call was a failed call
-            if self._breaker._success_fail_buffer.get_old_value != 1:
+            if self._breaker._success_fail_buffer.get_old_value() != 1:
                 self._breaker._inc_counter_success()
                 self._breaker._dec_counter_failure()
         else:
             self._breaker._inc_counter_success()
+
+        print 'append on success'
 
         self._breaker._success_fail_buffer.append(1)
 
@@ -977,8 +974,12 @@ class CircuitClosedState(CircuitBreakerState):
             # using the same _state_storage object, or if the _state_storage objects
             # share a central source of truth (as would be the case with the redis
             # storage).
+            print 'clearing buffer'
+            self.clear_buffer(self._breaker._success_fail_buffer)
+            self._breaker._success_fail_buffer.__class__ = ringbuffer.RingBuffer
+            self._breaker._state_storage.reset_counter_zero()
+            print 'reset Fail and Success counters'
 
-            #self._breaker._state_storage.reset_counter_zero()
             for listener in self._breaker.listeners:
                 listener.state_change(self._breaker, prev_state, self)
 
@@ -1007,6 +1008,15 @@ class CircuitClosedState(CircuitBreakerState):
 
     def on_success(self):
         print 'close state : success state'
+        print self._breaker._state_storage.fail_counter
+        print self._breaker._state_storage.success_counter
+        print self._breaker._state_storage.total_calls
+
+
+    def clear_buffer(self, _success_fail_buffer):
+        #del _success_fail_buffer[:]
+        _success_fail_buffer.clear()
+
 
 
 class CircuitOpenState(CircuitBreakerState):

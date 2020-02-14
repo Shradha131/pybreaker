@@ -36,11 +36,12 @@ timeout = timedelta(seconds=10)
 def hello_word():
     time_now = datetime.utcnow()
     while time_now < (opened_at + timeout):
-        return "Total : {0}\nFail : {1}\nSuccess : {2}\nState : {3}" \
+        raise NotImplementedError()
+    return "Total : {0}\nFail : {1}\nSuccess : {2}\nState : {3}" \
         .format(db_breaker._state_storage._total_calls, db_breaker._state_storage.fail_counter,
                 db_breaker._state_storage.success_counter, db_breaker.current_state)
 
-    raise NotImplementedError()
+
 
 
 @app.route('/err')

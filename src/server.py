@@ -23,7 +23,7 @@ class Glistener(pybreaker.CircuitBreakerListener):
 
 
 app = Flask(__name__)
-db_breaker = pybreaker.CircuitBreaker(fail_max=2, reset_timeout=5,
+db_breaker = pybreaker.CircuitBreaker(fail_max=2, reset_timeout=5, buffer_reset_flag=True,
                                       listeners=[Glistener()]
                                       )
 
